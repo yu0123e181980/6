@@ -1780,13 +1780,13 @@
                 const data = getCurrentData();
                 const currentLevel = currentHierarchy.length;
                 const nextLevel = hierarchyLevels[currentLevel];
-                
+
                 const sortedStores = getStoreList(data);
-                
+
                 const categoryTotals = {};
                 sortedStores.forEach(store => {
                     const key = `${store.企業名}_${store.店舗名}`;
-                    const storeData = filteredData.filter(d => 
+                    const storeData = filteredData.filter(d =>
                         d['企業名'] === store.企業名 && d['店舗名'] === store.店舗名
                     );
                     categoryTotals[key] = {
@@ -1794,38 +1794,74 @@
                         totalFace: storeData.reduce((sum, d) => sum + (d['フェイス数'] || 0), 0)
                     };
                 });
-                
-                const items = [...new Set(data.map(d => d[nextLevel]))].sort();
-                
-                let aggregatedData = items.map(item => {
-                    const itemData = data.filter(d => d[nextLevel] === item);
-                    const result = { 
-                        name: item,
-                        hierarchyPath: {}
-                    };
-                    
+
+                // 階層パス全体を考慮して一意のアイテムを取得
+                const itemsMap = {};
+                data.forEach(d => {
+                    // 現在の階層までのパスを構築
+                    const pathParts = [];
                     for (let i = 0; i < currentLevel; i++) {
-                        const levelName = hierarchyLevels[i];
-                        const values = [...new Set(itemData.map(d => d[levelName]))];
-                        result.hierarchyPath[levelName] = values[0] || '';
+                        pathParts.push(d[hierarchyLevels[i]] || '');
                     }
-                    
+                    pathParts.push(d[nextLevel] || '');
+                    const uniqueKey = pathParts.join('|||'); // 区切り文字で結合
+
+                    if (!itemsMap[uniqueKey]) {
+                        itemsMap[uniqueKey] = {
+                            name: d[nextLevel],
+                            hierarchyPath: {},
+                            uniqueKey: uniqueKey
+                        };
+                        for (let i = 0; i < currentLevel; i++) {
+                            const levelName = hierarchyLevels[i];
+                            itemsMap[uniqueKey].hierarchyPath[levelName] = d[levelName] || '';
+                        }
+                    }
+                });
+
+                const items = Object.values(itemsMap).sort((a, b) => {
+                    // 階層パス全体でソート
+                    return a.uniqueKey.localeCompare(b.uniqueKey);
+                });
+
+                let aggregatedData = items.map(itemInfo => {
+                    // 階層パス全体でフィルタリング
+                    const itemData = data.filter(d => {
+                        let match = d[nextLevel] === itemInfo.name;
+                        if (match) {
+                            for (let i = 0; i < currentLevel; i++) {
+                                const levelName = hierarchyLevels[i];
+                                if (d[levelName] !== itemInfo.hierarchyPath[levelName]) {
+                                    match = false;
+                                    break;
+                                }
+                            }
+                        }
+                        return match;
+                    });
+
+                    const result = {
+                        name: itemInfo.name,
+                        hierarchyPath: itemInfo.hierarchyPath,
+                        uniqueKey: itemInfo.uniqueKey
+                    };
+
                     sortedStores.forEach(store => {
                         const key = `${store.企業名}_${store.店舗名}`;
-                        const storeData = itemData.filter(d => 
+                        const storeData = itemData.filter(d =>
                             d['企業名'] === store.企業名 && d['店舗名'] === store.店舗名
                         );
-                        
+
                         const skuCount = storeData.reduce((sum, d) => sum + (d['SKU数'] || 0), 0);
                         const faceCount = storeData.reduce((sum, d) => sum + (d['フェイス数'] || 0), 0);
-                        
-                        const skuRatio = categoryTotals[key].totalSKU > 0 
-                            ? (skuCount / categoryTotals[key].totalSKU) * 100 
+
+                        const skuRatio = categoryTotals[key].totalSKU > 0
+                            ? (skuCount / categoryTotals[key].totalSKU) * 100
                             : 0;
-                        const faceRatio = categoryTotals[key].totalFace > 0 
-                            ? (faceCount / categoryTotals[key].totalFace) * 100 
+                        const faceRatio = categoryTotals[key].totalFace > 0
+                            ? (faceCount / categoryTotals[key].totalFace) * 100
                             : 0;
-                        
+
                         result[key] = {
                             SKU数: skuCount,
                             'SKU数構成比': skuRatio,
@@ -1833,14 +1869,14 @@
                             'フェイス数構成比': faceRatio
                         };
                     });
-                    
+
                     return result;
                 });
-                
+
                 if (sortState.column) {
                     aggregatedData = applySorting(aggregatedData);
                 }
-                
+
                 renderComparisonTable(aggregatedData, sortedStores);
                 renderComparisonChart(aggregatedData, sortedStores, items);
             }
@@ -1892,7 +1928,9 @@
                     }
                     
                     if (currentLevel < 4) {
-                        html += `<td><button class="drill-btn" data-item="${item.name}">▼</button> ${item.name}</td>`;
+                        // 階層パス情報をエンコードしてdata属性に格納
+                        const pathData = JSON.stringify(item.hierarchyPath).replace(/"/g, '&quot;');
+                        html += `<td><button class="drill-btn" data-item="${item.name}" data-hierarchy-path="${pathData}">▼</button> ${item.name}</td>`;
                     } else {
                         html += `<td>${item.name}</td>`;
                     }
@@ -1957,7 +1995,29 @@
                 if (currentHierarchy.length < 4) {
                     document.querySelectorAll('.drill-btn').forEach(btn => {
                         btn.addEventListener('click', () => {
-                            currentHierarchy.push(btn.dataset.item);
+                            const itemName = btn.dataset.item;
+                            const hierarchyPathAttr = btn.dataset.hierarchyPath;
+
+                            // 階層パス情報がある場合、*ALL*を実際の値に置き換える
+                            if (hierarchyPathAttr) {
+                                try {
+                                    const hierarchyPath = JSON.parse(hierarchyPathAttr.replace(/&quot;/g, '"'));
+
+                                    // 現在の階層の*ALL*を実際の値に置き換える
+                                    for (let i = 0; i < currentHierarchy.length; i++) {
+                                        if (currentHierarchy[i] === '*ALL*') {
+                                            const levelName = hierarchyLevels[i];
+                                            if (hierarchyPath[levelName]) {
+                                                currentHierarchy[i] = hierarchyPath[levelName];
+                                            }
+                                        }
+                                    }
+                                } catch (e) {
+                                    console.error('Failed to parse hierarchy path:', e);
+                                }
+                            }
+
+                            currentHierarchy.push(itemName);
                             resetSortAndFilter();
                             updateView();
                         });
@@ -2093,6 +2153,7 @@
                         borderColor: colors.border,
                         borderWidth: 1,
                         itemNames: data.map(d => d.name),
+                        hierarchyPaths: data.map(d => d.hierarchyPath),
                         hidden: hiddenDatasets.has(index)
                     };
                 });
@@ -2110,6 +2171,20 @@
                             if (activeElements.length > 0 && currentHierarchy.length < 4) {
                                 const index = activeElements[0].index;
                                 const itemName = datasets[0].itemNames[index];
+                                const hierarchyPath = datasets[0].hierarchyPaths[index];
+
+                                // 階層パス情報がある場合、*ALL*を実際の値に置き換える
+                                if (hierarchyPath) {
+                                    for (let i = 0; i < currentHierarchy.length; i++) {
+                                        if (currentHierarchy[i] === '*ALL*') {
+                                            const levelName = hierarchyLevels[i];
+                                            if (hierarchyPath[levelName]) {
+                                                currentHierarchy[i] = hierarchyPath[levelName];
+                                            }
+                                        }
+                                    }
+                                }
+
                                 currentHierarchy.push(itemName);
                                 resetSortAndFilter();
                                 updateView();
