@@ -2672,11 +2672,70 @@
                     document.body.removeChild(tempContainer);
                 }, 100);
             }
-            
+
+            function exportTableAsImage(tableId, filename) {
+                const tableElement = document.getElementById(tableId);
+                if (!tableElement) {
+                    alert('テーブルが見つかりません');
+                    return;
+                }
+
+                const table = tableElement.querySelector('table');
+                if (!table) {
+                    alert('テーブルが見つかりません');
+                    return;
+                }
+
+                // テーブルをラップする一時的なコンテナを作成
+                const wrapper = document.createElement('div');
+                wrapper.className = 'download-table-container';
+                wrapper.style.position = 'absolute';
+                wrapper.style.left = '-9999px';
+                wrapper.style.top = '0';
+                wrapper.style.background = 'white';
+                wrapper.style.padding = '20px';
+
+                // テーブルのクローンを作成
+                const tableClone = table.cloneNode(true);
+                tableClone.className = 'download-table';
+
+                // 非表示の列を除外
+                const hiddenColumns = tableClone.querySelectorAll('.hidden-column');
+                hiddenColumns.forEach(col => col.remove());
+
+                wrapper.appendChild(tableClone);
+                document.body.appendChild(wrapper);
+
+                // html2canvasを使用してキャプチャ
+                html2canvas(wrapper, {
+                    scale: 2,
+                    backgroundColor: '#ffffff',
+                    logging: false,
+                    useCORS: true
+                }).then(canvas => {
+                    // Canvas to Blob
+                    canvas.toBlob(blob => {
+                        const url = URL.createObjectURL(blob);
+                        const link = document.createElement('a');
+                        link.download = filename + '_' + new Date().toISOString().slice(0, 10) + '.png';
+                        link.href = url;
+                        link.click();
+                        URL.revokeObjectURL(url);
+
+                        // クリーンアップ
+                        document.body.removeChild(wrapper);
+                    }, 'image/png');
+                }).catch(error => {
+                    console.error('テーブルのエクスポートに失敗しました:', error);
+                    alert('テーブルのエクスポートに失敗しました');
+                    document.body.removeChild(wrapper);
+                });
+            }
+
             document.getElementById('exportTableBtn').addEventListener('click', () => {
                 exportTableAsImage('comparisonTable', '比較表');
             });
-            
+
             document.getElementById('exportArbitraryTableBtn').addEventListener('click', () => {
                 exportTableAsImage('arbitraryTable', '任意項目分析表');
             });
